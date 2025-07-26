@@ -1,4 +1,4 @@
-name: Test and Build
+name: CI-CD with Security and Deployment
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
       - '**/*'
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -16,49 +16,77 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # Docker setup
-    - name: Docker Setup
+    # tfsec Security Scan for Terraform
+    - name: Run tfsec (Terraform security scan)
+      uses: aquasecurity/tfsec-action@v1.0.3
+      with:
+        working-directory: ./terraform
+
+    # Docker Setup
+    - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
 
-    # Docker login
-    - name: Docker Credentials
+    # Docker Login
+    - name: Login to Docker Hub
       uses: docker/login-action@v2
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # Generate unique image tag
-    - name: Docker tag
-      id: version
+    # Generate Version Tag
+    - name: Set Docker Image Tag
+      id: vars
       run: |
         VERSION=v$(date +"%Y%m%d%H%M%S")
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-    # Build Docker image
+    # Build Docker Image
     - name: Build Docker Image
       run: |
         docker build -t devrajj11/ci-cd:${{ env.VERSION }} .
 
-    # Push Docker image
+    # Trivy Image Scan
+    - name: Trivy Docker Image Scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: devrajj11/ci-cd:${{ env.VERSION }}
+        format: table
+        exit-code: '0'
+
+    # Push Docker Image
     - name: Push Docker Image
       run: |
         docker push devrajj11/ci-cd:${{ env.VERSION }}
 
-    # Update Kubernetes manifest
-    - name: Update K8s Manifests
+    # Update K8s Deployment Manifest
+    - name: Update deployment image
       run: |
         sed -i "s|image: devrajj11/ci-cd:.*|image: devrajj11/ci-cd:${{ env.VERSION }}|g" deploy/deployment.yaml
 
-    # Commit changes only if any
-    - name: Commit the changes
+    # Commit changes back to GitHub
+    - name: Commit and Push Changes
       run: |
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git config --global user.name "GitHub Actions Bot"
-        git checkout main
+        git config --global user.name "github-actions[bot]"
         git add deploy/deployment.yaml
-        if git diff --cached --quiet; then
-          echo "No changes to commit"
-        else
-          git commit -m "Update deploy.yaml with new image version - ${{ env.VERSION }}"
-          git push origin main
-        fi
+        git commit -m "Updated image to ${{ env.VERSION }}"
+        git push origin main || echo "No changes to commit"
+
+    # Configure AWS Credentials
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    # Update kubeconfig for EKS
+    - name: Update kubeconfig
+      run: aws eks --region ap-south-1 update-kubeconfig --name testing-cluster
+
+    # Deploy to EKS
+    - name: Apply Kubernetes Manifests
+      run: |
+        kubectl apply -f deploy/deployment.yaml
+        kubectl apply -f deploy/svc.yaml
+        kubectl apply -f deploy/mysealedsecret.yaml
