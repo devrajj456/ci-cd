@@ -3,57 +3,62 @@ name: Test and Build
 on:
   push:
     branches:
-    - main
+      - main
     paths:
-    - '**/*'
+      - '**/*'
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    #Setting up environment
+    # Checkout code
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
+    # Docker setup
     - name: Docker Setup
       uses: docker/setup-buildx-action@v2
 
+    # Docker login
     - name: Docker Credentials
       uses: docker/login-action@v2
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
+    # Generate unique image tag
     - name: Docker tag
       id: version
       run: |
         VERSION=v$(date +"%Y%m%d%H%M%S")
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-    # Build the Docker Image
+    # Build Docker image
     - name: Build Docker Image
       run: |
-        docker build -t devrajj11/devops-demo:${{ env.VERSION }} .
+        docker build -t devrajj11/ci-cd:${{ env.VERSION }} .
 
-    # Push the Docker Image
+    # Push Docker image
     - name: Push Docker Image
       run: |
-        docker push devrajj11/devops-demo:${{ env.VERSION }}
+        docker push devrajj11/ci-cd:${{ env.VERSION }}
 
-    # Update the K8s Manifest Files
+    # Update Kubernetes manifest
     - name: Update K8s Manifests
       run: |
-        cat deploy/deployment.yaml
-        sed -i "s|image: devrajj11/devops-demo:.*|image: devrajj11/devops-demo:${{ env.VERSION }}|g" deploy/deployment.yaml
-        cat deploy/deployment.yaml
+        sed -i "s|image: devrajj11/ci-cd:.*|image: devrajj11/ci-cd:${{ env.VERSION }}|g" deploy/deployment.yaml
 
-    # Update Github
+    # Commit changes only if any
     - name: Commit the changes
       run: |
-        git config --global user.email "<>"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
         git config --global user.name "GitHub Actions Bot"
         git checkout main
         git add deploy/deployment.yaml
-        git commit -m "Update deploy.yaml with new image version - ${{ env.VERSION }}"
-        git push origin main 
+        if git diff --cached --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update deploy.yaml with new image version - ${{ env.VERSION }}"
+          git push origin main
+        fi
