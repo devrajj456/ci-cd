@@ -17,6 +17,6 @@ spec:
     spec:
       containers:
       - name: ci-cd
-        image: devrajj11/ci-cd:v1
+        image: devrajj11/ci-cd:v20250726132556
         ports:
         - containerPort: 80
